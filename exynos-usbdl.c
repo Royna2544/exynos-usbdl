@@ -2,6 +2,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#define WIN32_LEAN_AND_MEAN
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -156,7 +158,7 @@ typedef struct PACKED dldata_s {
 } dldata_t;
 
 PACKED_END
-
+  
 static int newexploit(dldata_t *payload, int target_id) {
 	int rc;
 	uint32_t transferred;
@@ -200,7 +202,7 @@ static int send_payload(dldata_t *payload) {
 	uint8_t *payload_ptr = (uint8_t *)payload;
 
 	do {
-		rc = libusb_bulk_transfer(handle, LIBUSB_ENDPOINT_OUT | 2, payload_ptr, (total_size < BLOCK_SIZE ? total_size : BLOCK_SIZE), &transferred, 0);
+		rc = libusb_bulk_transfer(handle, LIBUSB_ENDPOINT_OUT | 2, payload_ptr, min(total_size, BLOCK_SIZE), &transferred, 0);
 		if(rc) {
 			fprintf(stderr, "Error libusb_bulk_transfer: %s\n", libusb_error_name(rc));
 			return rc;
@@ -438,20 +440,27 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	fseek(fd, 0, SEEK_END);
+	if (fseek(fd, 0, SEEK_END) < 0) {
+		fputs("Can't seek to end of file", stderr);
+		return EXIT_FAILURE;
+	}
 	fd_size = ftell(fd);
 
-	if(mode == EXPLOIT_MODE){
+	if (mode == EXPLOIT_MODE){
 		if(fd_size > MAX_PAYLOAD_SIZE){
 			fprintf(stderr, "Error: input payload size cannot exceed %u bytes !\n", MAX_PAYLOAD_SIZE);
 			return EXIT_FAILURE;
 		}
 		payload_size = sizeof(dldata_t) + MAX_PAYLOAD_SIZE + 2;// +2 bytes for footer
-	}else{// NORMAL_MODE
+	} else { // NORMAL_MODE
 		payload_size = sizeof(dldata_t) + fd_size + 2;// +2 bytes for footer
 	}
 
 	payload = (dldata_t*)calloc(1, payload_size);
+	if (payload == NULL) {
+		fputs("Cannot alloc memory", stderr);
+		return EXIT_FAILURE;
+	}
 	payload->size = payload_size;
 
 	fseek(fd, 0, SEEK_SET);
