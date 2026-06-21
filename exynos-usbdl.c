@@ -202,7 +202,7 @@ static int send_payload(dldata_t *payload) {
 	uint8_t *payload_ptr = (uint8_t *)payload;
 
 	do {
-		rc = libusb_bulk_transfer(handle, LIBUSB_ENDPOINT_OUT | 2, payload_ptr, min(total_size, BLOCK_SIZE), &transferred, 0);
+		rc = libusb_bulk_transfer(handle, LIBUSB_ENDPOINT_OUT | 2, payload_ptr, (((total_size) < (BLOCK_SIZE)) ? (total_size) : (BLOCK_SIZE)), &transferred, 0);
 		if(rc) {
 			fprintf(stderr, "Error libusb_bulk_transfer: %s\n", libusb_error_name(rc));
 			return rc;
